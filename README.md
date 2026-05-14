@@ -89,6 +89,16 @@ py C:\Codex\outlook_export_menu.py
 4. 離開
 ```
 
+也可以用 CLI 模式直接指定日期範圍與掃描清單，方便後續排程或自動化：
+
+```powershell
+py C:\Codex\outlook_export_menu.py -s 2026-05-12 -e 2026-05-14 -f C:\Codex\scan_set.ini
+```
+
+- `-s`：開始日期，格式 `YYYY-MM-DD`
+- `-e`：結束日期，格式 `YYYY-MM-DD`
+- `-f`：要載入的掃描清單 ini 檔
+
 ## 匯出流程
 
 1. 編輯 `scan_set.ini`，填入要掃描的 Outlook 資料夾。

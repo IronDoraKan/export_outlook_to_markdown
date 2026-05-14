@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import argparse
 import re
 import sys
 import traceback
@@ -112,11 +113,11 @@ def save_manifest(output_dir: Path, manifest: dict) -> None:
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def create_scan_set_template() -> None:
-    if SCAN_SET_FILE.exists():
+def create_scan_set_template(scan_set_file: Path = SCAN_SET_FILE) -> None:
+    if scan_set_file.exists():
         return
 
-    SCAN_SET_FILE.write_text(
+    scan_set_file.write_text(
         "\n".join(
             [
                 "# 每行填一個要掃描的 Outlook 資料夾名稱。",
@@ -132,11 +133,11 @@ def create_scan_set_template() -> None:
     )
 
 
-def load_scan_targets() -> set[str]:
-    create_scan_set_template()
+def load_scan_targets(scan_set_file: Path = SCAN_SET_FILE) -> set[str]:
+    create_scan_set_template(scan_set_file)
     targets: set[str] = set()
 
-    for line in SCAN_SET_FILE.read_text(encoding="utf-8-sig").splitlines():
+    for line in scan_set_file.read_text(encoding="utf-8-sig").splitlines():
         value = line.strip()
         if not value or value.startswith("#"):
             continue
@@ -395,23 +396,38 @@ def export_mail(mail, output_dir: Path, manifest: dict) -> bool:
     return True
 
 
-def export_by_date_range(output_dir: Path) -> None:
-    start = parse_date("請輸入開始日期")
-    end = parse_date("請輸入結束日期", default=start, end_of_day=True)
+def parse_cli_date(value: str, *, end_of_day: bool = False) -> datetime:
+    try:
+        base = datetime.strptime(value, "%Y-%m-%d")
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"日期格式需為 YYYY-MM-DD：{value}") from exc
+    return datetime.combine(base.date(), time.max if end_of_day else time.min)
+
+
+def export_by_date_range(
+    output_dir: Path,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    scan_set_file: Path = SCAN_SET_FILE,
+) -> None:
+    if start is None:
+        start = parse_date("請輸入開始日期")
+    if end is None:
+        end = parse_date("請輸入結束日期", default=start, end_of_day=True)
     if end < start:
         print("結束日期不能早於開始日期。")
         return
 
-    scan_targets = load_scan_targets()
+    scan_targets = load_scan_targets(scan_set_file)
     if not scan_targets:
-        print(f"{SCAN_SET_FILE} 沒有任何資料夾名稱，請先新增要掃描的資料夾。")
+        print(f"{scan_set_file} 沒有任何資料夾名稱，請先新增要掃描的資料夾。")
         return
 
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest = load_manifest(output_dir)
     stats = ExportStats()
 
-    print(f"\n正在連線 Outlook，並依 {SCAN_SET_FILE} 掃描指定資料夾...")
+    print(f"\n正在連線 Outlook，並依 {scan_set_file} 掃描指定資料夾...")
     pythoncom.CoInitialize()
     try:
         outlook = win32com.client.Dispatch("Outlook.Application")
@@ -490,7 +506,49 @@ def change_output_dir(current: Path) -> Path:
     return Path(raw).expanduser()
 
 
-def main() -> int:
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="匯出 Outlook 郵件為 Markdown；未提供參數時會啟動原本的互動選單。",
+    )
+    parser.add_argument("-s", "--start", help="開始日期，格式 YYYY-MM-DD")
+    parser.add_argument("-e", "--end", help="結束日期，格式 YYYY-MM-DD")
+    parser.add_argument("-f", "--file", help="要載入的掃描清單 ini 檔，例如 scan_set.ini")
+    return parser
+
+
+def run_cli(args: argparse.Namespace) -> int:
+    missing = [
+        option
+        for option, value in (("-s/--start", args.start), ("-e/--end", args.end), ("-f/--file", args.file))
+        if not value
+    ]
+    if missing:
+        print(f"CLI 模式缺少必要參數：{', '.join(missing)}", file=sys.stderr)
+        return 2
+
+    scan_set_file = Path(args.file).expanduser()
+    if not scan_set_file.exists():
+        print(f"找不到掃描清單檔案：{scan_set_file}", file=sys.stderr)
+        return 2
+
+    try:
+        start = parse_cli_date(args.start)
+        end = parse_cli_date(args.end, end_of_day=True)
+    except argparse.ArgumentTypeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    export_by_date_range(DEFAULT_OUTPUT_DIR, start=start, end=end, scan_set_file=scan_set_file)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv:
+        parser = build_arg_parser()
+        args = parser.parse_args(argv)
+        return run_cli(args)
+
     output_dir = DEFAULT_OUTPUT_DIR
 
     while True:
