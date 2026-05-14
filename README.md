@@ -1,0 +1,2 @@
+# export_outlook_to_markdown
+從outlook匯出郵件到md檔案，為後續的AI知識庫做準備。
